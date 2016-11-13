@@ -1,153 +1,149 @@
 
-function CreateForceForPlayer(player, assign)
-	local forceName = player.name .. "_deathforce"
-	if game.forces[forceName] == nil then
-		game.create_force(forceName)
+--[[CUSTOM FUNCTIONS]]--
+function CreatePlayerData(player, overwrite)
+	overwrite = overwrite or false
+	
+	if global.player_data[player.index] == nil or overwrite then
+		global.player_data[player.index] = {
+			position = nil,
+			surface = nil
+		}
+	end
+end
+
+function HasSpawn(player)
+	return global.player_data[player.index] ~= nil and global.player_data[player.index].position ~= nil and global.player_data[player.index].surface ~= nil
+end
+
+function RemoveSpawn(player)
+	if global.player_data[player.index] ~= nil then
+		global.player_data[player.index].position = nil
+		global.player_data[player.index].surface = nil
+	end
+end
+
+function HasValidSpawn(player)
+	if not HasSpawn(player) then
+		return false
 	end
 	
-	if assign then
-		player.force = game.forces[forceName]
+	if game.surfaces[global.player_data[player.index].surface] == nil then
+		return false
 	end
-end
-
-function HasGlobal(player)
-	return global.killed_players[player.index] ~= nil
-end
-
-function CreateGlobal(player, respawnForce, respawnPos, respawnSurface)
-	global.killed_players[player.index] = {
-		respawnForce = respawnForce,
-		respawnPosition = respawnPos,
-		respawnSurface = respawnSurface
-	}
-end
-
-function RespawnSet(player)
-	return global.killed_players[player.index] ~= nil and global.killed_players[player.index].respawnPosition ~= nil
-end
-
-function SetForceSpawnPoint(forceName, position, surfaceName)
-	if game.forces[forceName] ~= nil then
-		if surfaceName == nil then
-			surfaceName = "nauvis"
-		end
-		if position == nil then
-			position = game.forces.player.get_spawn_position(surfaceName)
-		end
-		game.forces[forceName].set_spawn_position(position, surfaceName)
-	end
-end
-
-function SetRespawnPosition(player, position, surfaceName)
-	global.killed_players[player.index].respawnPosition = position
-	global.killed_players[player.index].respawnSurface = surfaceName
 	
-	CreateForceForPlayer(player, false)
-	SetForceSpawnPoint(player.name .. "_deathforce", position, surfaceName)
+	local surface = game.surfaces[global.player_data[player.index].surface]
+	
+	local entity = surface.find_entity("personal-spawn-marker", global.player_data[player.index].position)
+	
+	return entity ~= nil and entity.valid
 end
 
-function RemoveSpawnPosition(player)
-	SetRespawnPosition(player, nil, nil)
+function GetSpawnEntity(player)
+	
+	if HasValidSpawn(player) then
+		local surface = game.surfaces[global.player_data[player.index].surface]
+	
+		local entity = surface.find_entity("personal-spawn-marker", global.player_data[player.index].position)
+		return entity
+	end
+	
+	return nil
 end
+
+function AddSpawn(player, entity)
+	CreatePlayerData(player)
+		
+	global.player_data[player.index].position = entity.position
+	global.player_data[player.index].surface = entity.surface.name
+end
+
 
 function on_init()
-	if global.killed_players == nil then
-		global.killed_players = {}
-	end
-end
-
-function on_player_died(event)
-	local player = game.players[event.player_index]
-	
-	
-	CreateGlobal(player, player.force.name, nil, nil)
-	CreateForceForPlayer(player, true)
-end
-
-function on_player_respawned(event)
-	local player = game.players[event.player_index]
-	
-	local forceName = player.name .. "_deathforce"
-	
-	if game.forces[forceName] ~= nil and HasGlobal(player) then
-		local respawnForce = game.forces[global.killed_players[player.index].respawnForce]
-		player.force = respawnForce
+	if global.player_data == nil then
+		global.player_data = {}
 	end
 end
 
 function on_built_entity(event)
-	local player = game.players[event.player_index]
+	
 	local entity = event.created_entity
+	local player = game.players[event.player_index]
 	
 	if entity.name == "personal-spawn-marker" then
-		if not HasGlobal(player) then
-			CreateGlobal(player, player.force.name, nil, nil)
-		end
-		
-		if not RespawnSet(player) then
-			SetRespawnPosition(player, entity.position, entity.surface.name)
-			player.print("Spawn point set")
-		else
-			player.insert({name = "personal-spawn-marker-item", count = 1})
+	
+		if HasValidSpawn(player) then
 			entity.destroy()
-			player.print("Error: You can only set 1 spawn point at a time")
+			
+			if player.cursor_stack ~= nil and player.cursor_stack.valid_for_read and player.cursor_stack.name == "personal-spawn-marker-item" then
+				player.cursor_stack.count = player.cursor_stack.count + 1
+			elseif player.cursor_stack == nil or not player.cursor_stack.valid or not player.cursor_stack.valid_for_read then
+				player.cursor_stack.set_stack({name = "personal-spawn-marker-item", count = 1})
+			else
+				player.insert({name = "personal-spawn-marker-item", count = 1})
+			end
+			player.print("Error: you can only set one spawn point at a time")
+		else
+			AddSpawn(player, entity)
 		end
 	end
 end
 
 function on_robot_built_entity(event)
-	local entity = event.created_entity
-	local player = entity.built_by
-	local robot = event.robot
+	
+	local entity = event.entity
+	local player = event.robot.last_user
 	
 	if entity.name == "personal-spawn-marker" then
-		if not HasGlobal(player) then
-			CreateGlobal(player, player.force.name, nil, nil)
-		end
-		
-		if not RespawnSet(player) then
-			SetRespawnPosition(player, entity.position, entity.surface.name)
-			player.print("Spawn point set")
-		else
-			if robot.can_insert({name = "personal-spawn-marker-item", count = 1}) then
-				robot.insert({name = "personal-spawn-marker-item", count = 1})
-			end
-		
+		if HasValidSpawn(player) then
 			entity.destroy()
-			player.print("Error: You can only set 1 spawn point at a time")
+		else
+			AddSpawn(player, entity)
 		end
 	end
+	
 end
 
 function on_entity_died(event)
 	local entity = event.entity
 	
 	if entity.name == "personal-spawn-marker" then
-		local player = entity.built_by
-		
-		if HasGlobal(player) and RespawnSet(player) then
-			RemoveSpawnPosition(player)
-			player.print("Warning: Spawn Marker destroyed. Spawn Position Reset")
-		end
+		local player = entity.last_user
+		RemoveSpawn(player)
 	end
 end
 
-function on_player_mined_item(event)
+function on_robot_pre_mined(event)
+	local entity = event.entity
+	
+	if entity.name == "personal-spawn-marker" then
+		local player = entity.last_user
+		RemoveSpawn(player)
+	end
+end
+
+function on_player_respawned(event)
 	local player = game.players[event.player_index]
 	
-	if event.item_stack.name == "personal-spawn-marker-item" then
-		if HasGlobal(player) and RespawnSet(player) then
-			RemoveSpawnPosition(player)
-			player.print("Warning: Spawn Marker destroyed. Spawn Position Reset")
+	if HasValidSpawn(player) then
+		local surface = game.surfaces[global.player_data[player.index].surface]
+	
+		player.teleport(surface.find_non_colliding_position("player", global.player_data[player.index].position, 100, 1), global.player_data[player.index].surface)
+		
+		local marker = GetSpawnEntity(player)
+		if marker ~= nil then
+			marker.health = marker.health - (marker.prototype.max_health / 10)
+			if marker.health <= 0 then
+				marker.die()
+			end
 		end
+		
 	end
 end
 
 script.on_init(on_init)
-script.on_load(on_load)
-script.on_event(defines.events.on_player_died, on_player_died)
-script.on_event(defines.events.on_player_respawned, on_player_respawned)
 script.on_event(defines.events.on_built_entity, on_built_entity)
 script.on_event(defines.events.on_robot_built_entity, on_robot_built_entity)
 script.on_event(defines.events.on_entity_died, on_entity_died)
-script.on_event(defines.events.on_player_mined_item, on_player_mined_item)
+script.on_event(defines.events.on_robot_pre_mined, on_robot_pre_mined)
+script.on_event(defines.events.on_pre_player_died, on_pre_player_died)
+script.on_event(defines.events.on_player_respawned, on_player_respawned)
